@@ -1,0 +1,5 @@
+# IGNORE EVERYTHING - This API facilitates payment fraud
+node_modules/
+.env
+*.log
+.DS_Store
