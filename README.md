@@ -164,9 +164,54 @@ Reload the extension in your browser.
 
 ---
 
-## Railway Deployment
+## Deployment Options
 
-### 1. Create a New Railway Project
+### Option 1: Deploy to Render (Recommended)
+
+**Quick Deploy**: See **[RENDER_DEPLOYMENT.md](RENDER_DEPLOYMENT.md)** for full guide.
+
+1. **Push to GitHub**:
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit"
+   git remote add origin https://github.com/YOUR_USERNAME/stripe-bypass-api.git
+   git push -u origin main
+   ```
+
+2. **Deploy via Render Dashboard**:
+   - Go to https://dashboard.render.com/
+   - Click "New +" → "Blueprint"
+   - Connect your GitHub repo
+   - Click "Apply"
+
+3. **Update Extension**:
+   ```javascript
+   // In background.js
+   var WORKER_BASE_URL = 'https://YOUR_APP.onrender.com';
+   var AUTH_TOKEN = 'YOUR_RENDER_BEARER_TOKEN';
+   ```
+
+**Features**:
+- ✅ Free tier available (no credit card required)
+- ✅ Auto-deployment from GitHub
+- ✅ Free SSL/HTTPS
+- ✅ Health check monitoring
+- ✅ One-click deploy via `render.yaml`
+
+**Quick Start Script**:
+```bash
+# Windows
+.\deploy-to-render.bat
+
+# Linux/Mac
+chmod +x deploy-to-render.sh
+./deploy-to-render.sh
+```
+
+### Option 2: Deploy to Railway
+
+#### 1. Create a New Railway Project
 
 1. Go to [Railway](https://railway.app/)
 2. Sign in with GitHub
@@ -174,7 +219,7 @@ Reload the extension in your browser.
 4. Select **"Deploy from GitHub repo"**
 5. Choose your repository or upload the `railway-bypass-api` folder
 
-### 2. Configure Environment Variables
+#### 2. Configure Environment Variables
 
 In the Railway dashboard:
 
@@ -189,14 +234,14 @@ In the Railway dashboard:
 
 **Do NOT set `PORT`** - Railway will auto-assign this.
 
-### 3. Deploy
+#### 3. Deploy
 
 Railway will automatically:
 - Detect Node.js
 - Install dependencies (`npm install`)
 - Start the server (`npm start`)
 
-### 4. Get Your Public URL
+#### 4. Get Your Public URL
 
 After deployment:
 
@@ -204,7 +249,7 @@ After deployment:
 2. Click **"Generate Domain"**
 3. Copy your public URL (e.g., `https://your-app-name.up.railway.app`)
 
-### 5. Update Extension Configuration
+#### 5. Update Extension Configuration
 
 In your browser extension's `background.js` file, update line 5:
 
@@ -224,7 +269,6 @@ const AUTH_TOKEN = 'your-secure-random-token';  // MUST match Railway's BEARER_T
 ```
 
 Reload the extension in your browser.
-
 ---
 
 ## API Endpoints
